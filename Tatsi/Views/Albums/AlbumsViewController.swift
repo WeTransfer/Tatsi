@@ -303,7 +303,7 @@ extension AlbumsViewController {
 extension AlbumsViewController: PHPhotoLibraryChangeObserver {
     
     func photoLibraryDidChange(_ changeInstance: PHChange) {
-        guard let smartAlbumsFetchResults = smartAlbumsFetchResults, let userAlbumsFetchResults = sharedAlbumsFetchResults else {
+        guard let smartAlbumsFetchResults = smartAlbumsFetchResults, let userAlbumsFetchResults = userAlbumsFetchResults else {
             return
         }
         
