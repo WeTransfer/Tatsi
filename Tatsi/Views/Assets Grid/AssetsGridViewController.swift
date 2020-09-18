@@ -79,6 +79,9 @@ final internal class AssetsGridViewController: UICollectionViewController, Picke
     /// When the album view is animating in. Only used when the config is set to "SingleViewMode".
     fileprivate var animatingAlbumView = false
     
+    /// The most recent fetch result for the assets in the album, used to query for change details when the PhotoLibrary changed.
+    private var assetFetchResults: PHFetchResult<PHAsset>?
+    
     fileprivate var assets: [PHAsset]? {
         didSet {
             guard let collectionView = self.collectionView else {
@@ -90,9 +93,16 @@ final internal class AssetsGridViewController: UICollectionViewController, Picke
                     if self.config?.invertUserLibraryOrder == false && self.userScrolled == false && self.album.assetCollectionType == .smartAlbum {
                         self.scrollToEnd()
                     }
-                    for selectedAsset in self.selectedAssets {
+                    
+                    let currentSelectedAssets = self.selectedAssets.filter { asset -> Bool in
+                        return self.assets?.contains(asset) == true
+                    }
+                    
+                    self.selectedAssets = currentSelectedAssets
+                    self.selectedAssets.forEach { selectedAsset in
                         self.selectAsset(selectedAsset)
                     }
+                    
                     self.emptyView = collectionView.numberOfItems(inSection: 0) <= 0  ? AlbumEmptyView() : nil
                 })
                 
@@ -120,6 +130,10 @@ final internal class AssetsGridViewController: UICollectionViewController, Picke
         fatalError("init(coder:) has not been implemented")
     }
     
+    deinit {
+        PHPhotoLibrary.shared().unregisterChangeObserver(self)
+    }
+    
     // MARK: - View Lifecycle
 
     override func viewDidLoad() {
@@ -138,7 +152,7 @@ final internal class AssetsGridViewController: UICollectionViewController, Picke
         
         self.navigationItem.rightBarButtonItem = self.doneButton
         
-        NotificationCenter.default.addObserver(self, selector: #selector(AssetsGridViewController.applicationDidBecomeActive(_:)), name: UIApplication.didBecomeActiveNotification, object: nil)
+        PHPhotoLibrary.shared().register(self)
 
         if #available(iOS 13.0, *) {
             // needed because iOS 13 does not call traitCollectionDidChange after being added to the view hierarchy like older iOS versions
@@ -293,28 +307,30 @@ final internal class AssetsGridViewController: UICollectionViewController, Picke
             self.emptyView = AlbumEmptyView(state: .loading)
         }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let strongSelf = self else {
+            guard let self = self else {
                 return
             }
-            let result = PHAsset.fetchAssets(in: strongSelf.album, options: fetchOptions)
-            var allAssets = [PHAsset]()
-            result.enumerateObjects({ (asset, _, _) in
-                allAssets.append(asset)
-            })
-            DispatchQueue.main.async {
-                if self?.config?.invertUserLibraryOrder == true && strongSelf.album.isUserLibrary {
-                    allAssets.reverse()
-                }
-                self?.assets = allAssets
-            }
+            
+            let result = PHAsset.fetchAssets(in: self.album, options: fetchOptions)
+            self.handleFetchResult(result)
         }
-        
     }
     
-    // MARK: - Notifications
-    
-    @objc fileprivate func applicationDidBecomeActive(_ notification: Notification) {
-        self.startFetchingAssets()
+    private func handleFetchResult(_ result: PHFetchResult<PHAsset>) {
+        assetFetchResults = result
+        
+        var allAssets = [PHAsset]()
+        result.enumerateObjects({ (asset, _, _) in
+            allAssets.append(asset)
+        })
+        
+        DispatchQueue.main.async {
+            if self.config?.invertUserLibraryOrder == true && self.album.isUserLibrary {
+                allAssets.reverse()
+            }
+            
+            self.assets = allAssets
+        }
     }
     
     // MARK: - Layout
@@ -565,4 +581,17 @@ extension AssetsGridViewController: UIImagePickerControllerDelegate, UINavigatio
         }
     }
     
+}
+
+// MARK: - PHPHotoLibraryChangeObserver
+
+extension AssetsGridViewController: PHPhotoLibraryChangeObserver {
+    
+    func photoLibraryDidChange(_ changeInstance: PHChange) {
+        guard let fetchResult = assetFetchResults, let changeDetails = changeInstance.changeDetails(for: fetchResult) else {
+            return
+        }
+        
+        handleFetchResult(changeDetails.fetchResultAfterChanges)
+    }
 }
