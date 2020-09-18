@@ -46,6 +46,10 @@ final internal class AlbumsViewController: UITableViewController, PickerViewCont
     /// The categories of albums to display in the album list. These translate to the sections in the table view.
     fileprivate var categories: [AlbumCategory] = []
     
+    private var smartAlbumsFetchResults: PHFetchResult<PHAssetCollection>?
+    private var userAlbumsFetchResults: PHFetchResult<PHCollection>?
+    private var sharedAlbumsFetchResults: PHFetchResult<PHAssetCollection>?
+    
     lazy fileprivate var smartAlbumSortingOrder: [PHAssetCollectionSubtype] = {
         var smartAlbumSortingOrder = [
             PHAssetCollectionSubtype.smartAlbumUserLibrary,
@@ -82,6 +86,10 @@ final internal class AlbumsViewController: UITableViewController, PickerViewCont
         fatalError("init(coder:) has not been implemented")
     }
     
+    deinit {
+        PHPhotoLibrary.shared().unregisterChangeObserver(self)
+    }
+    
     // MARK: - View Lifecycle
     
     override func viewDidLoad() {
@@ -104,6 +112,8 @@ final internal class AlbumsViewController: UITableViewController, PickerViewCont
         self.tableView.separatorInset = UIEdgeInsets(top: 0, left: -10, bottom: 0, right: 0)
         self.tableView.separatorStyle = .none
         self.tableView.backgroundColor = self.config?.colors.background ?? TatsiConfig.default.colors.background
+        
+        PHPhotoLibrary.shared().register(self)
         
         self.tableView.accessibilityIdentifier = "tatsi.tableView.albums"
         
@@ -128,18 +138,26 @@ final internal class AlbumsViewController: UITableViewController, PickerViewCont
     
     fileprivate func startLoadingAlbums() {
         var newCategories = [AlbumCategory]()
-        let smartAlbums = self.fetchSmartAlbums()
+        
+        let smartAlbumsFetchResults = PHAssetCollection.fetchAssetCollections(with: PHAssetCollectionType.smartAlbum, subtype: PHAssetCollectionSubtype.albumRegular, options: nil)
+        self.smartAlbumsFetchResults = smartAlbumsFetchResults
+        let smartAlbums = self.sortSmartAlbumResults(smartAlbumsFetchResults)
         if !smartAlbums.isEmpty {
             newCategories.append(AlbumCategory(headerTitle: nil, albums: smartAlbums))
         }
         
-        let userAlbums = self.fetchUserAlbums()
+        let userAlbumsFetchResults = PHCollectionList.fetchTopLevelUserCollections(with: nil)
+        self.userAlbumsFetchResults = userAlbumsFetchResults
+        
+        let userAlbums = self.sortUserAlbumResults(userAlbumsFetchResults)
         if !userAlbums.isEmpty {
             newCategories.append(AlbumCategory(headerTitle: LocalizableStrings.albumsViewMyAlbumsHeader, albums: userAlbums))
         }
         
         if self.config?.showSharedAlbums == true {
-            let sharedAlbums = self.fetchSharedAlbums()
+            let sharedAlbumsFetchResukts = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .albumCloudShared, options: nil)
+            self.sharedAlbumsFetchResults = sharedAlbumsFetchResukts
+            let sharedAlbums = self.sortSharedAlbumResults(sharedAlbumsFetchResukts)
             if !sharedAlbums.isEmpty {
                 newCategories.append(AlbumCategory(headerTitle: LocalizableStrings.albumsViewSharedAlbumsHeader, albums: sharedAlbums))
             }
@@ -147,8 +165,7 @@ final internal class AlbumsViewController: UITableViewController, PickerViewCont
         self.categories = newCategories
     }
     
-    fileprivate func fetchSmartAlbums() -> [PHAssetCollection] {
-        let collectionResults = PHAssetCollection.fetchAssetCollections(with: PHAssetCollectionType.smartAlbum, subtype: PHAssetCollectionSubtype.albumRegular, options: nil)
+    fileprivate func sortSmartAlbumResults(_ collectionResults: PHFetchResult<PHAssetCollection>) -> [PHAssetCollection] {
         var collections = [PHAssetCollection]()
         collectionResults.enumerateObjects({ (collection, _, _) in
             guard self.config?.isCollectionAllowed(collection) == true else {
@@ -165,8 +182,7 @@ final internal class AlbumsViewController: UITableViewController, PickerViewCont
         return collections
     }
     
-    fileprivate func fetchUserAlbums() -> [PHAssetCollection] {
-        let collectionResults = PHCollectionList.fetchTopLevelUserCollections(with: nil)
+    fileprivate func sortUserAlbumResults(_ collectionResults: PHFetchResult<PHCollection>) -> [PHAssetCollection] {
         var collections = [PHAssetCollection]()
         collectionResults.enumerateObjects({ (collection, _, _) in
             guard let assetCollection = collection as? PHAssetCollection, self.config?.isCollectionAllowed(collection) == true else {
@@ -183,8 +199,7 @@ final internal class AlbumsViewController: UITableViewController, PickerViewCont
         return collections
     }
     
-    fileprivate func fetchSharedAlbums() -> [PHAssetCollection] {
-        let collectionResults = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .albumCloudShared, options: nil)
+    fileprivate func sortSharedAlbumResults(_ collectionResults: PHFetchResult<PHAssetCollection>) -> [PHAssetCollection] {
         var collections = [PHAssetCollection]()
         collectionResults.enumerateObjects({ (collection, _, _) in
             collections.append(collection)
@@ -283,4 +298,33 @@ extension AlbumsViewController {
         return AlbumsTableHeaderView.height
     }
     
+}
+
+extension AlbumsViewController: PHPhotoLibraryChangeObserver {
+    
+    func photoLibraryDidChange(_ changeInstance: PHChange) {
+        guard let smartAlbumsFetchResults = smartAlbumsFetchResults, let userAlbumsFetchResults = userAlbumsFetchResults else {
+            return
+        }
+        
+        let smartAlbumChangeDetails = changeInstance.changeDetails(for: smartAlbumsFetchResults)
+        let userAlbumChangeDetails = changeInstance.changeDetails(for: userAlbumsFetchResults)
+    
+        var sharedAlbumChangeDetails: PHFetchResultChangeDetails<PHAssetCollection>?
+        if let sharedAlbumFetchResults = sharedAlbumsFetchResults {
+            sharedAlbumChangeDetails = changeInstance.changeDetails(for: sharedAlbumFetchResults)
+        }
+        
+        DispatchQueue.main.async {
+            guard smartAlbumChangeDetails != nil
+                || userAlbumChangeDetails != nil
+                || (self.config?.showSharedAlbums == true
+                    && sharedAlbumChangeDetails != nil) else {
+                        return
+            }
+            
+            self.startLoadingAlbums()
+            self.tableView.reloadData()
+        }
+    }
 }
