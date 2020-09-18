@@ -53,11 +53,7 @@ final internal class AlbumTableViewCell: UITableViewCell {
         return stackView
     }()
     
-    var album: PHAssetCollection? {
-        didSet {
-            self.albumChanged = self.album != oldValue || contentCount != self.album?.estimatedAssetCount
-        }
-    }
+    var album: PHAssetCollection?
 
     var colors: TatsiColors? {
         didSet {
@@ -66,9 +62,6 @@ final internal class AlbumTableViewCell: UITableViewCell {
             self.countLabel.textColor = self.colors?.secondaryLabel ?? TatsiConfig.default.colors.secondaryLabel
         }
     }
-    
-    private var albumChanged = false
-    private var contentCount = 0
     
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -106,12 +99,6 @@ final internal class AlbumTableViewCell: UITableViewCell {
     }
     
     func reloadContents(with options: PHFetchOptions?) {
-        guard albumChanged else {
-            return
-        }
-        
-        albumChanged = false
-        
         self.titleLabel.text = self.album?.localizedTitle
         
         let fetchOptions = options
@@ -132,7 +119,6 @@ final internal class AlbumTableViewCell: UITableViewCell {
                 return
             }
             
-            self?.contentCount = count
             self?.countLabel.text = AlbumTableViewCell.numberFormatter.string(from: NSNumber(value: count))
             self?.accessibilityValue = String(format: LocalizableStrings.accessibilityAlbumImagesCount, locale: nil, arguments: [count])
         })
